@@ -1,32 +1,33 @@
 /* src/main.rs */
 
-pub(crate) mod fancy_log {
-    pub(crate) enum LogLevel {
-        Debug,
-        Error,
-        Warn,
-        Info,
-    }
-
-    pub(crate) fn log(_: LogLevel, _: &str) {}
-}
+// REMOVED: fancy_log module
+// REASON: Logging is side-effect free logic, irrelevant to type-layout ICE.
 
 pub(crate) mod common {
     pub(crate) mod requirements {
-        #[derive(Debug, thiserror::Error)]
+        // SIMPLIFIED: Removed thiserror macros to rule out proc-macro interference
+        #[derive(Debug)]
         pub(crate) enum Error {
-            #[error("IO Error: {0}")]
             Io(String),
-            #[error("TLS Error: {0}")]
             Tls(String),
-            #[error("Configuration Error: {0}")]
             Configuration(String),
-            #[error("System Error: {0}")]
             System(String),
-            #[error("Not Implemented: {0}")]
             NotImplemented(String),
-            #[error("Anyhow: {0}")]
-            Anyhow(#[from] anyhow::Error),
+            Anyhow(anyhow::Error),
+        }
+
+        // Manual impl to satisfy bounds if necessary
+        impl std::fmt::Display for Error {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:?}", self)
+            }
+        }
+        impl std::error::Error for Error {}
+
+        impl From<anyhow::Error> for Error {
+            fn from(e: anyhow::Error) -> Self {
+                Error::Anyhow(e)
+            }
         }
 
         pub(crate) type Result<T> = std::result::Result<T, Error>;
@@ -34,25 +35,15 @@ pub(crate) mod common {
 }
 
 pub(crate) mod modules {
-    pub(crate) mod kv {
-        use std::collections::HashMap;
-
-        #[doc = " A per-connection, key-value storage space."]
-        #[doc = " Keys are expected to be lowercase and dot-separated (e.g., \"conn.ip\")."]
-        #[doc = " All values are stored as strings."]
-        pub(crate) type KvStore = HashMap<String, String>;
-    }
+    // REMOVED: kv module. Replaced usage with std::collections::HashMap directly.
 
     pub(crate) mod plugins {
         pub(crate) mod model {
-            use crate::modules::kv::KvStore;
+            // REMOVED: KvStore import
             use anyhow::Result;
-            use async_trait::async_trait;
             use serde::Deserialize;
             use serde::Serialize;
             use serde_json::Value;
-            use std::any::Any;
-            use std::borrow::Cow;
             use std::collections::HashMap;
             use tokio::io::AsyncRead;
             use tokio::io::AsyncWrite;
@@ -63,12 +54,7 @@ pub(crate) mod modules {
 
             pub(crate) type ProcessingStep = HashMap<String, PluginInstance>;
 
-            pub(crate) struct ParamDef {}
-
             pub(crate) type ResolvedInputs = HashMap<String, Value>;
-
-            #[derive(Serialize, Deserialize, Debug)]
-            pub(crate) struct MiddlewareOutput {}
 
             pub(crate) trait ByteStream:
                 AsyncRead + AsyncWrite + Unpin + Send + Sync
@@ -82,77 +68,14 @@ pub(crate) mod modules {
                 Virtual(String),
             }
 
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            pub(crate) enum Layer {
-                L4,
-                L4Plus,
-                L7,
-            }
-
             #[derive(Debug)]
             pub(crate) enum TerminatorResult {
                 Finished,
                 Upgrade {},
             }
 
-            pub(crate) trait Plugin: Send + Sync + Any {
-                fn name(&self) -> &str;
-                fn params(&self) -> Vec<ParamDef>;
-                fn as_any(&self) -> &dyn Any;
-
-                fn as_middleware(&self) -> Option<&dyn Middleware> {
-                    loop {}
-                }
-
-                fn as_terminator(&self) -> Option<&dyn Terminator> {
-                    loop {}
-                }
-
-                fn as_l7_middleware(&self) -> Option<&dyn L7Middleware> {
-                    loop {}
-                }
-
-                fn as_l7_terminator(&self) -> Option<&dyn L7Terminator> {
-                    loop {}
-                }
-            }
-
-            #[async_trait]
-            pub(crate) trait Middleware: Plugin {
-                fn output(&self) -> Vec<Cow<'static, str>>;
-                async fn execute(&self, inputs: ResolvedInputs) -> Result<MiddlewareOutput>;
-            }
-
-            #[async_trait]
-            pub(crate) trait L7Middleware: Plugin {
-                fn output(&self) -> Vec<Cow<'static, str>>;
-                async fn execute_l7(
-                    &self,
-                    context: &mut (dyn Any + Send),
-                    inputs: ResolvedInputs,
-                ) -> Result<MiddlewareOutput>;
-            }
-
-            #[async_trait]
-            pub(crate) trait Terminator: Plugin {
-                fn supported_layers(&self) -> Vec<Layer>;
-                async fn execute(
-                    &self,
-                    inputs: ResolvedInputs,
-                    kv: &mut KvStore,
-                    conn: ConnectionObject,
-                ) -> Result<TerminatorResult>;
-            }
-
-            #[doc = " A privileged terminator trait that grants access to the full L7 Context."]
-            #[async_trait]
-            pub(crate) trait L7Terminator: Plugin {
-                async fn execute_l7(
-                    &self,
-                    context: &mut (dyn Any + Send),
-                    inputs: ResolvedInputs,
-                ) -> Result<TerminatorResult>;
-            }
+            // REMOVED: All Plugin/Middleware/Terminator traits.
+            // REASON: usage in main logic is only via ProcessingStep (HashMap).
         }
     }
 
@@ -186,26 +109,19 @@ pub(crate) mod modules {
                         use http_body_util::combinators::BoxBody;
                         use hyper::body::Incoming;
                         use hyper::upgrade::OnUpgrade;
+                        use std::future::Future;
                         use std::pin::Pin;
 
-                        #[doc = " A unified Body enum that bridges Hyper (H1/H2), H3 (Quinn), and Buffered data."]
                         pub(crate) enum VaneBody {
-                            #[doc = " Native Hyper Body (HTTP/1.1, HTTP/2)"]
                             Hyper(Incoming),
-                            #[doc = " H3 Stream Wrapper"]
                             H3(BoxBody<Bytes, Error>),
-                            #[doc = " Generic Stream Wrapper (Boxed, for plugins like CGI/FastCGI)"]
                             Generic(BoxBody<Bytes, Error>),
-                            #[doc = " Buffered Memory (Lazy Buffer or Generated Content)"]
                             Buffered(Full<Bytes>),
-                            #[doc = " Special State: Switching Protocols (WebSocket / Upgrade)"]
                             SwitchingProtocols(OnUpgrade),
-                            #[doc = " A bridge that executes a callback when polled."]
                             UpgradeBridge {
                                 tunnel_task:
                                     Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
                             },
-                            #[doc = " Empty Body"]
                             Empty,
                         }
                     }
@@ -214,9 +130,7 @@ pub(crate) mod modules {
                         use super::wrapper::VaneBody;
                         use crate::common::requirements::Error;
                         use crate::common::requirements::Result;
-                        use crate::fancy_log::LogLevel;
-                        use crate::fancy_log::log;
-                        use crate::modules::kv::KvStore;
+                        // REMOVED: Log imports
                         use crate::modules::plugins::model::ConnectionObject;
                         use crate::modules::stack::protocol::application::container::Container;
                         use crate::modules::stack::protocol::application::container::PayloadState;
@@ -231,16 +145,14 @@ pub(crate) mod modules {
                         use hyper::service::service_fn;
                         use hyper_util::rt::TokioIo;
                         use hyper_util::server::conn::auto::Builder as AutoBuilder;
+                        use std::collections::HashMap;
                         use tokio::sync::oneshot;
 
                         pub(crate) async fn handle_connection(
                             conn: ConnectionObject,
                             protocol_id: String,
                         ) -> Result<()> {
-                            log(
-                                LogLevel::Debug,
-                                &format!("➜ Starting L7 Httpx Engine (Proto: {})...", protocol_id),
-                            );
+                            // Removed log calls
                             let io = match conn {
                                 ConnectionObject::Stream(boxed_stream) => {
                                     TokioIo::new(boxed_stream)
@@ -256,11 +168,8 @@ pub(crate) mod modules {
                                 async move { serve_request(req, proto).await }
                             });
                             let builder = AutoBuilder::new(hyper_util::rt::TokioExecutor::new());
-                            if let Err(e) = builder.serve_connection(io, service).await {
-                                log(
-                                    LogLevel::Error,
-                                    &format!("✗ Httpx Connection Error: {:?}", e),
-                                );
+                            if let Err(_e) = builder.serve_connection(io, service).await {
+                                // Removed log
                             }
                             Ok(())
                         }
@@ -282,7 +191,9 @@ pub(crate) mod modules {
                             let request_payload = PayloadState::Http(VaneBody::Hyper(body));
                             let response_payload = PayloadState::Empty;
                             let (res_tx, res_rx) = oneshot::channel::<Response<()>>();
-                            let mut kv = KvStore::new();
+
+                            // MODIFIED: KvStore -> HashMap
+                            let mut kv = HashMap::new();
                             kv.insert("req.proto".to_string(), protocol_id.clone());
                             kv.insert("req.method".to_string(), parts.method.to_string());
                             kv.insert("req.path".to_string(), parts.uri.path().to_string());
@@ -311,27 +222,18 @@ pub(crate) mod modules {
                                 match registry.get(&protocol_id) {
                                     Some(c) => c.value().clone(),
                                     None => {
-                                        log(
-                                            LogLevel::Error,
-                                            &format!(
-                                                "✗ No config for app protocol: {}",
-                                                protocol_id
-                                            ),
-                                        );
                                         return Ok(response_error(500, "Configuration Error"));
                                     }
                                 }
                             };
-                            if let Err(e) =
+
+                            if let Err(_e) =
                                 flow::execute_l7(&config.pipeline, &mut container, "".to_string())
                                     .await
                             {
-                                log(
-                                    LogLevel::Error,
-                                    &format!("✗ L7 Flow Execution Failed: {:#}", e),
-                                );
                                 return Ok(response_error(502, "Bad Gateway (Flow Error)"));
                             }
+
                             match res_rx.await {
                                 Ok(response_parts) => {
                                     let (parts, _) = response_parts.into_parts();
@@ -363,34 +265,16 @@ pub(crate) mod modules {
                                                         )
                                                         .await
                                                         {
-                                                            Ok((from_client, from_upstream)) => {
-                                                                log(
-                                                                    LogLevel::Debug,
-                                                                    &format!(
-                                                                        "✓ Upgrade Tunnel Closed (Client->: {}, <-Upstream: {})",
-                                                                        from_client, from_upstream
-                                                                    ),
-                                                                );
+                                                            Ok((_from_client, _from_upstream)) => {
+                                                                // Log removed
                                                             }
-                                                            Err(e) => {
-                                                                log(
-                                                                    LogLevel::Debug,
-                                                                    &format!(
-                                                                        "⚠ Upgrade Tunnel Error: {}",
-                                                                        e
-                                                                    ),
-                                                                );
+                                                            Err(_e) => {
+                                                                // Log removed
                                                             }
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        log(
-                                                            LogLevel::Error,
-                                                            &format!(
-                                                                "✗ Failed to establish upgrade tunnel: {}",
-                                                                e
-                                                            ),
-                                                        );
+                                                    Err(_e) => {
+                                                        // Log removed
                                                     }
                                                 }
                                             });
@@ -398,10 +282,6 @@ pub(crate) mod modules {
                                                 tunnel_task: Some(tunnel_future),
                                             });
                                         } else {
-                                            log(
-                                                LogLevel::Error,
-                                                "✗ Response indicates Upgrade, but Client handle is missing!",
-                                            );
                                             payload = PayloadState::Empty;
                                         }
                                     }
@@ -409,10 +289,6 @@ pub(crate) mod modules {
                                     Ok(Response::from_parts(parts, final_body))
                                 }
                                 Err(_) => {
-                                    log(
-                                        LogLevel::Warn,
-                                        "⚠ Flow finished but no response signal received.",
-                                    );
                                     Ok(response_error(502, "Bad Gateway (No Response Signal)"))
                                 }
                             }
@@ -435,12 +311,13 @@ pub(crate) mod modules {
 
                 pub(crate) mod container {
                     use crate::common::requirements::Result;
-                    use crate::modules::kv::KvStore;
+                    // REMOVED: KvStore import
                     use crate::modules::stack::protocol::application::http::wrapper::VaneBody;
                     use bytes::Bytes;
                     use http::HeaderMap;
                     use http::Response;
                     use hyper::upgrade::OnUpgrade;
+                    use std::collections::HashMap;
                     use tokio::sync::oneshot;
 
                     pub(crate) enum PayloadState {
@@ -457,7 +334,7 @@ pub(crate) mod modules {
 
                     impl Container {
                         pub(crate) fn new(
-                            kv: KvStore,
+                            kv: HashMap<String, String>, // Changed from KvStore
                             request_headers: HeaderMap,
                             request_body: PayloadState,
                             response_headers: HeaderMap,
