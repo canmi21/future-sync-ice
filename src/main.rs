@@ -44,20 +44,7 @@ pub(crate) mod repro {
         }
     }
 
-    pub(crate) type OnUpgrade = Pin<Box<dyn Future<Output = Result<Upgraded, ()>> + Send>>;
-
-    pub(crate) enum VaneBody {
-        SwitchingProtocols(OnUpgrade),
-        UpgradeBridge {
-            tunnel_task: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
-        },
-        Empty,
-    }
-
-    pub(crate) struct Container {
-        pub(crate) body: VaneBody,
-        pub(crate) upgrade: Option<OnUpgrade>,
-    }
+    type OnUpgrade = Pin<Box<dyn Future<Output = Result<Upgraded, ()>> + Send>>;
 
     pub(crate) async fn handle_connection() {
         let service = || async move { serve_request().await };
@@ -65,37 +52,27 @@ pub(crate) mod repro {
     }
 
     async fn serve_request() {
-        let mut container = Container {
-            body: VaneBody::Empty,
-            upgrade: Some(Box::pin(async {
-                Ok(Upgraded {
-                    io: Box::new(tokio::io::empty()),
-                })
-            }) as OnUpgrade),
-        };
-        tokio::task::yield_now().await;
-        container.body = VaneBody::SwitchingProtocols(Box::pin(async {
+        let client: OnUpgrade = Box::pin(async {
             Ok(Upgraded {
                 io: Box::new(tokio::io::empty()),
             })
-        }));
-        let payload = std::mem::replace(&mut container.body, VaneBody::Empty);
-        if let VaneBody::SwitchingProtocols(upstream) = payload {
-            if let Some(client) = container.upgrade.take() {
-                let tunnel_future = Box::pin(async move {
-                    tokio::task::yield_now().await;
-                    match tokio::try_join!(client, upstream) {
-                        Ok((mut c, mut u)) => {
-                            let _ = tokio::io::copy_bidirectional(&mut c, &mut u).await;
-                        }
-                        Err(_) => {}
-                    }
-                });
-                container.body = VaneBody::UpgradeBridge {
-                    tunnel_task: Some(tunnel_future),
-                };
+        });
+        let upstream: OnUpgrade = Box::pin(async {
+            Ok(Upgraded {
+                io: Box::new(tokio::io::empty()),
+            })
+        });
+        tokio::task::yield_now().await;
+        let tunnel_future = Box::pin(async move {
+            tokio::task::yield_now().await;
+            match tokio::try_join!(client, upstream) {
+                Ok((mut c, mut u)) => {
+                    let _ = tokio::io::copy_bidirectional(&mut c, &mut u).await;
+                }
+                Err(_) => {}
             }
-        }
+        });
+        let _target: Pin<Box<dyn Future<Output = ()> + Send + Sync>> = tunnel_future;
         loop {}
     }
 }
