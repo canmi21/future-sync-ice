@@ -1,22 +1,14 @@
 /* src/main.rs */
 
-// REMOVED: fancy_log module
-// REASON: Logging is side-effect free logic, irrelevant to type-layout ICE.
-
 pub(crate) mod common {
     pub(crate) mod requirements {
-        // SIMPLIFIED: Removed thiserror macros to rule out proc-macro interference
         #[derive(Debug)]
         pub(crate) enum Error {
             Io(String),
-            Tls(String),
-            Configuration(String),
             System(String),
-            NotImplemented(String),
             Anyhow(anyhow::Error),
         }
 
-        // Manual impl to satisfy bounds if necessary
         impl std::fmt::Display for Error {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{:?}", self)
@@ -35,18 +27,11 @@ pub(crate) mod common {
 }
 
 pub(crate) mod modules {
-    // REMOVED: kv module. Replaced usage with std::collections::HashMap directly.
-
     pub(crate) mod plugins {
         pub(crate) mod model {
-            // REMOVED: KvStore import
-            use anyhow::Result;
-            use serde::Deserialize;
-            use serde::Serialize;
-            use serde_json::Value;
+            use serde::{Deserialize, Serialize};
             use std::collections::HashMap;
-            use tokio::io::AsyncRead;
-            use tokio::io::AsyncWrite;
+            use tokio::io::{AsyncRead, AsyncWrite};
             use tokio::net::TcpStream;
 
             #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -54,7 +39,7 @@ pub(crate) mod modules {
 
             pub(crate) type ProcessingStep = HashMap<String, PluginInstance>;
 
-            pub(crate) type ResolvedInputs = HashMap<String, Value>;
+            // REMOVED: ResolvedInputs, ParamDef, MiddlewareOutput (unused in crash path)
 
             pub(crate) trait ByteStream:
                 AsyncRead + AsyncWrite + Unpin + Send + Sync
@@ -63,9 +48,7 @@ pub(crate) mod modules {
 
             pub(crate) enum ConnectionObject {
                 Tcp(TcpStream),
-                Udp {},
                 Stream(Box<dyn ByteStream>),
-                Virtual(String),
             }
 
             #[derive(Debug)]
@@ -73,40 +56,16 @@ pub(crate) mod modules {
                 Finished,
                 Upgrade {},
             }
-
-            // REMOVED: All Plugin/Middleware/Terminator traits.
-            // REASON: usage in main logic is only via ProcessingStep (HashMap).
         }
     }
 
     pub(crate) mod stack {
         pub(crate) mod protocol {
             pub(crate) mod application {
-                pub(crate) mod model {
-                    use crate::modules::plugins::model::ProcessingStep;
-                    use arc_swap::ArcSwap;
-                    use dashmap::DashMap;
-                    use once_cell::sync::Lazy;
-                    use serde::Deserialize;
-                    use serde::Serialize;
-                    use std::sync::Arc;
-
-                    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-                    pub(crate) struct ApplicationConfig {
-                        pub(crate) pipeline: ProcessingStep,
-                    }
-
-                    pub(crate) static APPLICATION_REGISTRY: Lazy<
-                        ArcSwap<DashMap<String, Arc<ApplicationConfig>>>,
-                    > = Lazy::new(|| ArcSwap::new(Arc::new(DashMap::new())));
-                }
+                // REMOVED: model (Registry) module
 
                 pub(crate) mod http {
                     pub(crate) mod wrapper {
-                        use crate::common::requirements::Error;
-                        use bytes::Bytes;
-                        use http_body_util::Full;
-                        use http_body_util::combinators::BoxBody;
                         use hyper::body::Incoming;
                         use hyper::upgrade::OnUpgrade;
                         use std::future::Future;
@@ -114,9 +73,6 @@ pub(crate) mod modules {
 
                         pub(crate) enum VaneBody {
                             Hyper(Incoming),
-                            H3(BoxBody<Bytes, Error>),
-                            Generic(BoxBody<Bytes, Error>),
-                            Buffered(Full<Bytes>),
                             SwitchingProtocols(OnUpgrade),
                             UpgradeBridge {
                                 tunnel_task:
@@ -128,18 +84,14 @@ pub(crate) mod modules {
 
                     pub(crate) mod httpx {
                         use super::wrapper::VaneBody;
-                        use crate::common::requirements::Error;
-                        use crate::common::requirements::Result;
-                        // REMOVED: Log imports
-                        use crate::modules::plugins::model::ConnectionObject;
-                        use crate::modules::stack::protocol::application::container::Container;
-                        use crate::modules::stack::protocol::application::container::PayloadState;
+                        use crate::common::requirements::{Error, Result};
+                        use crate::modules::plugins::model::{ConnectionObject, ProcessingStep};
+                        use crate::modules::stack::protocol::application::container::{
+                            Container, PayloadState,
+                        };
                         use crate::modules::stack::protocol::application::flow;
-                        use crate::modules::stack::protocol::application::model::APPLICATION_REGISTRY;
                         use bytes::Bytes;
-                        use http::HeaderMap;
-                        use http::Request;
-                        use http::Response;
+                        use http::{HeaderMap, Request, Response};
                         use http_body_util::combinators::BoxBody;
                         use hyper::body::Incoming;
                         use hyper::service::service_fn;
@@ -152,15 +104,12 @@ pub(crate) mod modules {
                             conn: ConnectionObject,
                             protocol_id: String,
                         ) -> Result<()> {
-                            // Removed log calls
                             let io = match conn {
                                 ConnectionObject::Stream(boxed_stream) => {
                                     TokioIo::new(boxed_stream)
                                 }
                                 _ => {
-                                    return Err(Error::System(
-                                        "Httpx engine requires a Stream connection.".into(),
-                                    ));
+                                    return Err(Error::System("Error".into()));
                                 }
                             };
                             let service = service_fn(move |req: Request<Incoming>| {
@@ -168,21 +117,17 @@ pub(crate) mod modules {
                                 async move { serve_request(req, proto).await }
                             });
                             let builder = AutoBuilder::new(hyper_util::rt::TokioExecutor::new());
-                            if let Err(_e) = builder.serve_connection(io, service).await {
-                                // Removed log
-                            }
+                            let _ = builder.serve_connection(io, service).await;
                             Ok(())
                         }
 
                         async fn serve_request(
                             mut req: Request<Incoming>,
-                            protocol_id: String,
+                            _protocol_id: String,
                         ) -> std::result::Result<Response<BoxBody<Bytes, Error>>, Error>
                         {
                             let client_upgrade_handle =
-                                if req.headers().contains_key(http::header::UPGRADE)
-                                    || req.headers().contains_key(http::header::CONNECTION)
-                                {
+                                if req.headers().contains_key(http::header::UPGRADE) {
                                     Some(hyper::upgrade::on(&mut req))
                                 } else {
                                     None
@@ -192,20 +137,9 @@ pub(crate) mod modules {
                             let response_payload = PayloadState::Empty;
                             let (res_tx, res_rx) = oneshot::channel::<Response<()>>();
 
-                            // MODIFIED: KvStore -> HashMap
-                            let mut kv = HashMap::new();
-                            kv.insert("req.proto".to_string(), protocol_id.clone());
-                            kv.insert("req.method".to_string(), parts.method.to_string());
-                            kv.insert("req.path".to_string(), parts.uri.path().to_string());
-                            kv.insert("req.version".to_string(), format!("{:?}", parts.version));
-                            if let Some(q) = parts.uri.query() {
-                                kv.insert("req.query".to_string(), q.to_string());
-                            }
-                            if let Some(host) = parts.headers.get("host") {
-                                if let Ok(h) = host.to_str() {
-                                    kv.insert("req.host".to_string(), h.to_string());
-                                }
-                            }
+                            // REMOVED: Large block of kv.insert calls
+                            let kv = HashMap::new();
+
                             let request_headers = std::mem::take(&mut parts.headers);
                             let response_headers = HeaderMap::new();
                             let mut container = Container::new(
@@ -217,21 +151,14 @@ pub(crate) mod modules {
                                 Some(res_tx),
                             );
                             container.client_upgrade = client_upgrade_handle;
-                            let config = {
-                                let registry = APPLICATION_REGISTRY.load();
-                                match registry.get(&protocol_id) {
-                                    Some(c) => c.value().clone(),
-                                    None => {
-                                        return Ok(response_error(500, "Configuration Error"));
-                                    }
-                                }
-                            };
+
+                            // SIMPLIFIED: Removed Registry lookup, using empty pipeline
+                            let pipeline = ProcessingStep::new();
 
                             if let Err(_e) =
-                                flow::execute_l7(&config.pipeline, &mut container, "".to_string())
-                                    .await
+                                flow::execute_l7(&pipeline, &mut container, "".to_string()).await
                             {
-                                return Ok(response_error(502, "Bad Gateway (Flow Error)"));
+                                return Ok(response_error());
                             }
 
                             match res_rx.await {
@@ -248,6 +175,7 @@ pub(crate) mod modules {
                                         if let Some(client_upgrade) =
                                             container.client_upgrade.take()
                                         {
+                                            // THIS IS THE CRITICAL BLOCK
                                             let tunnel_future = Box::pin(async move {
                                                 tokio::task::yield_now().await;
                                                 match tokio::try_join!(
@@ -259,23 +187,13 @@ pub(crate) mod modules {
                                                             TokioIo::new(&mut client_io);
                                                         let mut upstream_tokio =
                                                             TokioIo::new(&mut upstream_io);
-                                                        match tokio::io::copy_bidirectional(
+                                                        let _ = tokio::io::copy_bidirectional(
                                                             &mut client_tokio,
                                                             &mut upstream_tokio,
                                                         )
-                                                        .await
-                                                        {
-                                                            Ok((_from_client, _from_upstream)) => {
-                                                                // Log removed
-                                                            }
-                                                            Err(_e) => {
-                                                                // Log removed
-                                                            }
-                                                        }
+                                                        .await;
                                                     }
-                                                    Err(_e) => {
-                                                        // Log removed
-                                                    }
+                                                    Err(_) => {}
                                                 }
                                             });
                                             payload = PayloadState::Http(VaneBody::UpgradeBridge {
@@ -288,9 +206,7 @@ pub(crate) mod modules {
                                     let final_body = convert_payload_to_body(payload);
                                     Ok(Response::from_parts(parts, final_body))
                                 }
-                                Err(_) => {
-                                    Ok(response_error(502, "Bad Gateway (No Response Signal)"))
-                                }
+                                Err(_) => Ok(response_error()),
                             }
                         }
 
@@ -300,20 +216,14 @@ pub(crate) mod modules {
                             loop {}
                         }
 
-                        fn response_error(
-                            status: u16,
-                            msg: &str,
-                        ) -> Response<BoxBody<Bytes, Error>> {
+                        fn response_error() -> Response<BoxBody<Bytes, Error>> {
                             loop {}
                         }
                     }
                 }
 
                 pub(crate) mod container {
-                    use crate::common::requirements::Result;
-                    // REMOVED: KvStore import
                     use crate::modules::stack::protocol::application::http::wrapper::VaneBody;
-                    use bytes::Bytes;
                     use http::HeaderMap;
                     use http::Response;
                     use hyper::upgrade::OnUpgrade;
@@ -322,8 +232,6 @@ pub(crate) mod modules {
 
                     pub(crate) enum PayloadState {
                         Http(VaneBody),
-                        Generic,
-                        Buffered(Bytes),
                         Empty,
                     }
 
@@ -334,37 +242,32 @@ pub(crate) mod modules {
 
                     impl Container {
                         pub(crate) fn new(
-                            kv: HashMap<String, String>, // Changed from KvStore
-                            request_headers: HeaderMap,
-                            request_body: PayloadState,
-                            response_headers: HeaderMap,
+                            _kv: HashMap<String, String>,
+                            _request_headers: HeaderMap,
+                            _request_body: PayloadState,
+                            _response_headers: HeaderMap,
                             response_body: PayloadState,
-                            response_tx: Option<oneshot::Sender<Response<()>>>,
+                            _response_tx: Option<oneshot::Sender<Response<()>>>,
                         ) -> Self {
-                            loop {}
-                        }
-
-                        pub(crate) async fn force_buffer_request(&mut self) -> Result<&Bytes> {
-                            loop {}
-                        }
-
-                        pub(crate) async fn force_buffer_response(&mut self) -> Result<&Bytes> {
-                            loop {}
+                            Self {
+                                response_body,
+                                client_upgrade: None,
+                            }
                         }
                     }
                 }
 
                 pub(crate) mod flow {
                     use super::container::Container;
-                    use crate::modules::plugins::model::ProcessingStep;
-                    use crate::modules::plugins::model::TerminatorResult;
+                    use crate::modules::plugins::model::{ProcessingStep, TerminatorResult};
 
                     pub(crate) async fn execute_l7(
-                        step: &ProcessingStep,
-                        container: &mut Container,
-                        parent_path: String,
+                        _step: &ProcessingStep,
+                        _container: &mut Container,
+                        _parent_path: String,
                     ) -> anyhow::Result<TerminatorResult> {
-                        loop {}
+                        // Empty implementation to satisfy signature
+                        Ok(TerminatorResult::Finished)
                     }
                 }
             }
