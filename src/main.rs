@@ -4,9 +4,10 @@ pub(crate) mod common {
     pub(crate) mod requirements {
         #[derive(Debug)]
         pub(crate) enum Error {
-            Io(String),
+            // REMOVED: Io(String),
             System(String),
-            Anyhow(anyhow::Error),
+            // CHANGED: Removed anyhow dependency to isolate the issue
+            Anyhow(String),
         }
 
         impl std::fmt::Display for Error {
@@ -16,11 +17,7 @@ pub(crate) mod common {
         }
         impl std::error::Error for Error {}
 
-        impl From<anyhow::Error> for Error {
-            fn from(e: anyhow::Error) -> Self {
-                Error::Anyhow(e)
-            }
-        }
+        // REMOVED: impl From<anyhow::Error>
 
         pub(crate) type Result<T> = std::result::Result<T, Error>;
     }
@@ -29,17 +26,16 @@ pub(crate) mod common {
 pub(crate) mod modules {
     pub(crate) mod plugins {
         pub(crate) mod model {
-            use serde::{Deserialize, Serialize};
+            // REMOVED: serde imports
             use std::collections::HashMap;
             use tokio::io::{AsyncRead, AsyncWrite};
-            use tokio::net::TcpStream;
+            // REMOVED: tokio::net::TcpStream
 
-            #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+            // REMOVED: derive(Serialize, Deserialize)
+            #[derive(Debug, Clone, PartialEq, Eq)]
             pub(crate) struct PluginInstance {}
 
             pub(crate) type ProcessingStep = HashMap<String, PluginInstance>;
-
-            // REMOVED: ResolvedInputs, ParamDef, MiddlewareOutput (unused in crash path)
 
             pub(crate) trait ByteStream:
                 AsyncRead + AsyncWrite + Unpin + Send + Sync
@@ -47,7 +43,7 @@ pub(crate) mod modules {
             }
 
             pub(crate) enum ConnectionObject {
-                Tcp(TcpStream),
+                // REMOVED: Tcp(TcpStream),
                 Stream(Box<dyn ByteStream>),
             }
 
@@ -62,8 +58,6 @@ pub(crate) mod modules {
     pub(crate) mod stack {
         pub(crate) mod protocol {
             pub(crate) mod application {
-                // REMOVED: model (Registry) module
-
                 pub(crate) mod http {
                     pub(crate) mod wrapper {
                         use hyper::body::Incoming;
@@ -91,13 +85,13 @@ pub(crate) mod modules {
                         };
                         use crate::modules::stack::protocol::application::flow;
                         use bytes::Bytes;
-                        use http::{HeaderMap, Request, Response};
+                        use http::{Request, Response};
                         use http_body_util::combinators::BoxBody;
                         use hyper::body::Incoming;
                         use hyper::service::service_fn;
                         use hyper_util::rt::TokioIo;
                         use hyper_util::server::conn::auto::Builder as AutoBuilder;
-                        use std::collections::HashMap;
+                        // REMOVED: HashMap import
                         use tokio::sync::oneshot;
 
                         pub(crate) async fn handle_connection(
@@ -107,10 +101,7 @@ pub(crate) mod modules {
                             let io = match conn {
                                 ConnectionObject::Stream(boxed_stream) => {
                                     TokioIo::new(boxed_stream)
-                                }
-                                _ => {
-                                    return Err(Error::System("Error".into()));
-                                }
+                                } // REMOVED: Tcp match arm
                             };
                             let service = service_fn(move |req: Request<Incoming>| {
                                 let proto = protocol_id.clone();
@@ -137,22 +128,18 @@ pub(crate) mod modules {
                             let response_payload = PayloadState::Empty;
                             let (res_tx, res_rx) = oneshot::channel::<Response<()>>();
 
-                            // REMOVED: Large block of kv.insert calls
-                            let kv = HashMap::new();
+                            // REMOVED: kv HashMap creation
+                            // REMOVED: HeaderMap creation
 
-                            let request_headers = std::mem::take(&mut parts.headers);
-                            let response_headers = HeaderMap::new();
-                            let mut container = Container::new(
-                                kv,
-                                request_headers,
-                                request_payload,
-                                response_headers,
-                                response_payload,
-                                Some(res_tx),
-                            );
+                            // CHANGED: Container constructor arguments reduced
+                            let mut container =
+                                Container::new(request_payload, response_payload, Some(res_tx));
                             container.client_upgrade = client_upgrade_handle;
 
-                            // SIMPLIFIED: Removed Registry lookup, using empty pipeline
+                            // Store headers back temporarily to satisfy borrow checker if needed,
+                            // but we removed them from Container, so just drop them.
+                            let _ = parts.headers;
+
                             let pipeline = ProcessingStep::new();
 
                             if let Err(_e) =
@@ -175,7 +162,7 @@ pub(crate) mod modules {
                                         if let Some(client_upgrade) =
                                             container.client_upgrade.take()
                                         {
-                                            // THIS IS THE CRITICAL BLOCK
+                                            // THIS IS THE CRITICAL BLOCK (Unchanged)
                                             let tunnel_future = Box::pin(async move {
                                                 tokio::task::yield_now().await;
                                                 match tokio::try_join!(
@@ -224,10 +211,10 @@ pub(crate) mod modules {
 
                 pub(crate) mod container {
                     use crate::modules::stack::protocol::application::http::wrapper::VaneBody;
-                    use http::HeaderMap;
+                    // REMOVED: HeaderMap
                     use http::Response;
                     use hyper::upgrade::OnUpgrade;
-                    use std::collections::HashMap;
+                    // REMOVED: HashMap
                     use tokio::sync::oneshot;
 
                     pub(crate) enum PayloadState {
@@ -238,14 +225,13 @@ pub(crate) mod modules {
                     pub(crate) struct Container {
                         pub(crate) response_body: PayloadState,
                         pub(crate) client_upgrade: Option<OnUpgrade>,
+                        // REMOVED: kv and headers fields (Cleaning up struct layout)
                     }
 
                     impl Container {
                         pub(crate) fn new(
-                            _kv: HashMap<String, String>,
-                            _request_headers: HeaderMap,
+                            // REMOVED: unused args
                             _request_body: PayloadState,
-                            _response_headers: HeaderMap,
                             response_body: PayloadState,
                             _response_tx: Option<oneshot::Sender<Response<()>>>,
                         ) -> Self {
@@ -261,12 +247,12 @@ pub(crate) mod modules {
                     use super::container::Container;
                     use crate::modules::plugins::model::{ProcessingStep, TerminatorResult};
 
+                    // CHANGED: Error type in return to String
                     pub(crate) async fn execute_l7(
                         _step: &ProcessingStep,
                         _container: &mut Container,
                         _parent_path: String,
-                    ) -> anyhow::Result<TerminatorResult> {
-                        // Empty implementation to satisfy signature
+                    ) -> Result<TerminatorResult, String> {
                         Ok(TerminatorResult::Finished)
                     }
                 }
