@@ -1,4 +1,6 @@
-pub(crate) mod mock_hyper {
+/* src/main.rs */
+
+pub(crate) mod repro {
     use std::pin::Pin;
     use std::task::Context;
     use std::task::Poll;
@@ -10,9 +12,9 @@ pub(crate) mod mock_hyper {
         pub(crate) io: Box<dyn AsyncReadWrite + Send>,
     }
 
-    pub(crate) trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin { }
+    pub(crate) trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin {}
 
-    impl<T: AsyncRead + AsyncWrite + Unpin> AsyncReadWrite for T { }
+    impl<T: AsyncRead + AsyncWrite + Unpin> AsyncReadWrite for T {}
 
     impl AsyncRead for Upgraded {
         fn poll_read(
@@ -20,31 +22,29 @@ pub(crate) mod mock_hyper {
             _: &mut Context<'_>,
             _: &mut ReadBuf<'_>,
         ) -> Poll<std::io::Result<()>> {
-            loop { }
+            loop {}
         }
     }
 
     impl AsyncWrite for Upgraded {
-        fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<std::io::Result<usize>> {
-            loop { }
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            loop {}
         }
 
         fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-            loop { }
+            loop {}
         }
 
         fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-            loop { }
+            loop {}
         }
     }
 
     pub(crate) type OnUpgrade = Pin<Box<dyn Future<Output = Result<Upgraded, ()>> + Send>>;
-}
-
-pub(crate) mod httpx {
-    use super::mock_hyper::OnUpgrade;
-    use super::mock_hyper::Upgraded;
-    use std::pin::Pin;
 
     pub(crate) enum VaneBody {
         SwitchingProtocols(OnUpgrade),
@@ -60,9 +60,7 @@ pub(crate) mod httpx {
     }
 
     pub(crate) async fn handle_connection() {
-        let service = || async move {
-            serve_request().await
-        };
+        let service = || async move { serve_request().await };
         let _ = service().await;
     }
 
@@ -70,12 +68,16 @@ pub(crate) mod httpx {
         let mut container = Container {
             body: VaneBody::Empty,
             upgrade: Some(Box::pin(async {
-                Ok(Upgraded { io: Box::new(tokio::io::empty()) })
+                Ok(Upgraded {
+                    io: Box::new(tokio::io::empty()),
+                })
             }) as OnUpgrade),
         };
         tokio::task::yield_now().await;
         container.body = VaneBody::SwitchingProtocols(Box::pin(async {
-            Ok(Upgraded { io: Box::new(tokio::io::empty()) })
+            Ok(Upgraded {
+                io: Box::new(tokio::io::empty()),
+            })
         }));
         let payload = std::mem::replace(&mut container.body, VaneBody::Empty);
         if let VaneBody::SwitchingProtocols(upstream) = payload {
@@ -85,18 +87,20 @@ pub(crate) mod httpx {
                     match tokio::try_join!(client, upstream) {
                         Ok((mut c, mut u)) => {
                             let _ = tokio::io::copy_bidirectional(&mut c, &mut u).await;
-                        },
-                        Err(_) => { },
+                        }
+                        Err(_) => {}
                     }
                 });
-                container.body = VaneBody::UpgradeBridge { tunnel_task: Some(tunnel_future) };
+                container.body = VaneBody::UpgradeBridge {
+                    tunnel_task: Some(tunnel_future),
+                };
             }
         }
-        loop { }
+        loop {}
     }
 }
 
 #[tokio::main]
 async fn main() {
-    loop { }
+    loop {}
 }
