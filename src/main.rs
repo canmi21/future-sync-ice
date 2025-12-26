@@ -1,20 +1,20 @@
 /* src/main.rs */
 
-pub mod fancy_log {
-    pub enum LogLevel {
+pub(crate) mod fancy_log {
+    pub(crate) enum LogLevel {
         Debug,
         Error,
         Warn,
         Info,
     }
-    pub fn log(_: LogLevel, _: &str) {}
+
+    pub(crate) fn log(_: LogLevel, _: &str) {}
 }
 
-// ./src/common/mod.rs
-pub mod common {
-    pub mod requirements {
+pub(crate) mod common {
+    pub(crate) mod requirements {
         #[derive(Debug, thiserror::Error)]
-        pub enum Error {
+        pub(crate) enum Error {
             #[error("IO Error: {0}")]
             Io(String),
             #[error("TLS Error: {0}")]
@@ -29,51 +29,53 @@ pub mod common {
             Anyhow(#[from] anyhow::Error),
         }
 
-        pub type Result<T> = std::result::Result<T, Error>;
+        pub(crate) type Result<T> = std::result::Result<T, Error>;
     }
 }
 
-// ./src/modules/mod.rs
-pub mod modules {
-    // ./src/modules/kv/mod.rs
-    pub mod kv {
+pub(crate) mod modules {
+    pub(crate) mod kv {
         use std::collections::HashMap;
 
-        /// A per-connection, key-value storage space.
-        /// Keys are expected to be lowercase and dot-separated (e.g., "conn.ip").
-        /// All values are stored as strings.
-        pub type KvStore = HashMap<String, String>;
+        #[doc = " A per-connection, key-value storage space."]
+        #[doc = " Keys are expected to be lowercase and dot-separated (e.g., \"conn.ip\")."]
+        #[doc = " All values are stored as strings."]
+        pub(crate) type KvStore = HashMap<String, String>;
     }
 
-    // ./src/modules/plugins/mod.rs
-    pub mod plugins {
-        pub mod model {
+    pub(crate) mod plugins {
+        pub(crate) mod model {
             use crate::modules::kv::KvStore;
             use anyhow::Result;
             use async_trait::async_trait;
-            use serde::{Deserialize, Serialize};
+            use serde::Deserialize;
+            use serde::Serialize;
             use serde_json::Value;
             use std::any::Any;
             use std::borrow::Cow;
             use std::collections::HashMap;
-            use tokio::io::{AsyncRead, AsyncWrite};
+            use tokio::io::AsyncRead;
+            use tokio::io::AsyncWrite;
             use tokio::net::TcpStream;
 
             #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-            pub struct PluginInstance {}
+            pub(crate) struct PluginInstance {}
 
-            pub type ProcessingStep = HashMap<String, PluginInstance>;
+            pub(crate) type ProcessingStep = HashMap<String, PluginInstance>;
 
-            pub struct ParamDef {}
+            pub(crate) struct ParamDef {}
 
-            pub type ResolvedInputs = HashMap<String, Value>;
+            pub(crate) type ResolvedInputs = HashMap<String, Value>;
 
             #[derive(Serialize, Deserialize, Debug)]
-            pub struct MiddlewareOutput {}
+            pub(crate) struct MiddlewareOutput {}
 
-            pub trait ByteStream: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+            pub(crate) trait ByteStream:
+                AsyncRead + AsyncWrite + Unpin + Send + Sync
+            {
+            }
 
-            pub enum ConnectionObject {
+            pub(crate) enum ConnectionObject {
                 Tcp(TcpStream),
                 Udp {},
                 Stream(Box<dyn ByteStream>),
@@ -81,19 +83,19 @@ pub mod modules {
             }
 
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            pub enum Layer {
+            pub(crate) enum Layer {
                 L4,
                 L4Plus,
                 L7,
             }
 
             #[derive(Debug)]
-            pub enum TerminatorResult {
+            pub(crate) enum TerminatorResult {
                 Finished,
                 Upgrade {},
             }
 
-            pub trait Plugin: Send + Sync + Any {
+            pub(crate) trait Plugin: Send + Sync + Any {
                 fn name(&self) -> &str;
                 fn params(&self) -> Vec<ParamDef>;
                 fn as_any(&self) -> &dyn Any;
@@ -116,13 +118,13 @@ pub mod modules {
             }
 
             #[async_trait]
-            pub trait Middleware: Plugin {
+            pub(crate) trait Middleware: Plugin {
                 fn output(&self) -> Vec<Cow<'static, str>>;
                 async fn execute(&self, inputs: ResolvedInputs) -> Result<MiddlewareOutput>;
             }
 
             #[async_trait]
-            pub trait L7Middleware: Plugin {
+            pub(crate) trait L7Middleware: Plugin {
                 fn output(&self) -> Vec<Cow<'static, str>>;
                 async fn execute_l7(
                     &self,
@@ -132,7 +134,7 @@ pub mod modules {
             }
 
             #[async_trait]
-            pub trait Terminator: Plugin {
+            pub(crate) trait Terminator: Plugin {
                 fn supported_layers(&self) -> Vec<Layer>;
                 async fn execute(
                     &self,
@@ -142,9 +144,9 @@ pub mod modules {
                 ) -> Result<TerminatorResult>;
             }
 
-            /// A privileged terminator trait that grants access to the full L7 Context.
+            #[doc = " A privileged terminator trait that grants access to the full L7 Context."]
             #[async_trait]
-            pub trait L7Terminator: Plugin {
+            pub(crate) trait L7Terminator: Plugin {
                 async fn execute_l7(
                     &self,
                     context: &mut (dyn Any + Send),
@@ -154,70 +156,66 @@ pub mod modules {
         }
     }
 
-    // ./src/modules/stack/mod.rs
-    pub mod stack {
-        pub mod protocol {
-            pub mod application {
-                // ./src/modules/stack/protocol/application/model.rs
-                pub mod model {
+    pub(crate) mod stack {
+        pub(crate) mod protocol {
+            pub(crate) mod application {
+                pub(crate) mod model {
                     use crate::modules::plugins::model::ProcessingStep;
                     use arc_swap::ArcSwap;
                     use dashmap::DashMap;
                     use once_cell::sync::Lazy;
-                    use serde::{Deserialize, Serialize};
+                    use serde::Deserialize;
+                    use serde::Serialize;
                     use std::sync::Arc;
 
                     #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-                    pub struct ApplicationConfig {
-                        pub pipeline: ProcessingStep,
+                    pub(crate) struct ApplicationConfig {
+                        pub(crate) pipeline: ProcessingStep,
                     }
 
-                    pub static APPLICATION_REGISTRY: Lazy<
+                    pub(crate) static APPLICATION_REGISTRY: Lazy<
                         ArcSwap<DashMap<String, Arc<ApplicationConfig>>>,
                     > = Lazy::new(|| ArcSwap::new(Arc::new(DashMap::new())));
                 }
 
-                // ./src/modules/stack/protocol/application/http/mod.rs
-                pub mod http {
-                    // ./src/modules/stack/protocol/application/http/wrapper.rs
-                    pub mod wrapper {
+                pub(crate) mod http {
+                    pub(crate) mod wrapper {
                         use crate::common::requirements::Error;
                         use bytes::Bytes;
                         use http_body_util::Full;
                         use http_body_util::combinators::BoxBody;
                         use hyper::body::Incoming;
                         use hyper::upgrade::OnUpgrade;
-                        use std::future::Future;
-                        use std::pin::Pin; // Added explicit import
+                        use std::pin::Pin;
 
-                        /// A unified Body enum that bridges Hyper (H1/H2), H3 (Quinn), and Buffered data.
-                        pub enum VaneBody {
-                            /// Native Hyper Body (HTTP/1.1, HTTP/2)
+                        #[doc = " A unified Body enum that bridges Hyper (H1/H2), H3 (Quinn), and Buffered data."]
+                        pub(crate) enum VaneBody {
+                            #[doc = " Native Hyper Body (HTTP/1.1, HTTP/2)"]
                             Hyper(Incoming),
-                            /// H3 Stream Wrapper
+                            #[doc = " H3 Stream Wrapper"]
                             H3(BoxBody<Bytes, Error>),
-                            /// Generic Stream Wrapper (Boxed, for plugins like CGI/FastCGI)
+                            #[doc = " Generic Stream Wrapper (Boxed, for plugins like CGI/FastCGI)"]
                             Generic(BoxBody<Bytes, Error>),
-                            /// Buffered Memory (Lazy Buffer or Generated Content)
+                            #[doc = " Buffered Memory (Lazy Buffer or Generated Content)"]
                             Buffered(Full<Bytes>),
-                            /// Special State: Switching Protocols (WebSocket / Upgrade)
+                            #[doc = " Special State: Switching Protocols (WebSocket / Upgrade)"]
                             SwitchingProtocols(OnUpgrade),
-                            /// A bridge that executes a callback when polled.
+                            #[doc = " A bridge that executes a callback when polled."]
                             UpgradeBridge {
                                 tunnel_task:
                                     Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
                             },
-                            /// Empty Body
+                            #[doc = " Empty Body"]
                             Empty,
                         }
                     }
 
-                    // ./src/modules/stack/protocol/application/http/httpx.rs
-                    pub mod httpx {
+                    pub(crate) mod httpx {
                         use super::wrapper::VaneBody;
                         use crate::common::requirements::Error;
                         use crate::common::requirements::Result;
-                        use crate::fancy_log::{LogLevel, log}; // Uses local mock
+                        use crate::fancy_log::LogLevel;
+                        use crate::fancy_log::log;
                         use crate::modules::kv::KvStore;
                         use crate::modules::plugins::model::ConnectionObject;
                         use crate::modules::stack::protocol::application::container::Container;
@@ -235,7 +233,7 @@ pub mod modules {
                         use hyper_util::server::conn::auto::Builder as AutoBuilder;
                         use tokio::sync::oneshot;
 
-                        pub async fn handle_connection(
+                        pub(crate) async fn handle_connection(
                             conn: ConnectionObject,
                             protocol_id: String,
                         ) -> Result<()> {
@@ -435,8 +433,7 @@ pub mod modules {
                     }
                 }
 
-                // ./src/modules/stack/protocol/application/container.rs
-                pub mod container {
+                pub(crate) mod container {
                     use crate::common::requirements::Result;
                     use crate::modules::kv::KvStore;
                     use crate::modules::stack::protocol::application::http::wrapper::VaneBody;
@@ -446,20 +443,20 @@ pub mod modules {
                     use hyper::upgrade::OnUpgrade;
                     use tokio::sync::oneshot;
 
-                    pub enum PayloadState {
+                    pub(crate) enum PayloadState {
                         Http(VaneBody),
                         Generic,
                         Buffered(Bytes),
                         Empty,
                     }
 
-                    pub struct Container {
-                        pub response_body: PayloadState,
-                        pub client_upgrade: Option<OnUpgrade>,
+                    pub(crate) struct Container {
+                        pub(crate) response_body: PayloadState,
+                        pub(crate) client_upgrade: Option<OnUpgrade>,
                     }
 
                     impl Container {
-                        pub fn new(
+                        pub(crate) fn new(
                             kv: KvStore,
                             request_headers: HeaderMap,
                             request_body: PayloadState,
@@ -470,23 +467,22 @@ pub mod modules {
                             loop {}
                         }
 
-                        pub async fn force_buffer_request(&mut self) -> Result<&Bytes> {
+                        pub(crate) async fn force_buffer_request(&mut self) -> Result<&Bytes> {
                             loop {}
                         }
 
-                        pub async fn force_buffer_response(&mut self) -> Result<&Bytes> {
+                        pub(crate) async fn force_buffer_response(&mut self) -> Result<&Bytes> {
                             loop {}
                         }
                     }
                 }
 
-                // ./src/modules/stack/protocol/application/flow.rs
-                pub mod flow {
+                pub(crate) mod flow {
                     use super::container::Container;
                     use crate::modules::plugins::model::ProcessingStep;
                     use crate::modules::plugins::model::TerminatorResult;
 
-                    pub async fn execute_l7(
+                    pub(crate) async fn execute_l7(
                         step: &ProcessingStep,
                         container: &mut Container,
                         parent_path: String,
@@ -499,7 +495,6 @@ pub mod modules {
     }
 }
 
-// ./src/main.rs Entry
 #[tokio::main]
 async fn main() {
     loop {}
