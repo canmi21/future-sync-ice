@@ -52,27 +52,29 @@ pub(crate) mod repro {
     }
 
     async fn serve_request() {
-        let client: OnUpgrade = Box::pin(async {
+        let mut client: Option<OnUpgrade> = Some(Box::pin(async {
             Ok(Upgraded {
                 io: Box::new(tokio::io::empty()),
             })
-        });
+        }));
         let upstream: OnUpgrade = Box::pin(async {
             Ok(Upgraded {
                 io: Box::new(tokio::io::empty()),
             })
         });
         tokio::task::yield_now().await;
-        let tunnel_future = Box::pin(async move {
-            tokio::task::yield_now().await;
-            match tokio::try_join!(client, upstream) {
-                Ok((mut c, mut u)) => {
-                    let _ = tokio::io::copy_bidirectional(&mut c, &mut u).await;
+        if let Some(c) = client.take() {
+            let tunnel_future = Box::pin(async move {
+                tokio::task::yield_now().await;
+                match tokio::try_join!(c, upstream) {
+                    Ok((mut c_io, mut u_io)) => {
+                        let _ = tokio::io::copy_bidirectional(&mut c_io, &mut u_io).await;
+                    }
+                    Err(_) => {}
                 }
-                Err(_) => {}
-            }
-        });
-        let _target: Pin<Box<dyn Future<Output = ()> + Send + Sync>> = tunnel_future;
+            });
+            let _target: Pin<Box<dyn Future<Output = ()> + Send + Sync>> = tunnel_future;
+        }
         loop {}
     }
 }
