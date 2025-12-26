@@ -5,6 +5,8 @@ pub(crate) mod modules {
         pub(crate) mod protocol {
             pub(crate) mod application {
                 pub(crate) mod http {
+                    // Keep mock_hyper separate to preserve some structure,
+                    // but minimize it to just the IO types.
                     pub(crate) mod mock_hyper {
                         use std::future::Future;
                         use std::pin::Pin;
@@ -55,62 +57,59 @@ pub(crate) mod modules {
 
                         pub(crate) type OnUpgrade =
                             Pin<Box<dyn Future<Output = Result<Upgraded, ()>> + Send>>;
-                        pub(crate) struct Incoming;
                     }
 
-                    pub(crate) mod wrapper {
-                        use super::mock_hyper::{Incoming, OnUpgrade};
+                    pub(crate) mod httpx {
+                        use super::mock_hyper::{OnUpgrade, Upgraded};
                         use std::future::Future;
                         use std::pin::Pin;
 
+                        // INLINED: VaneBody from wrapper
                         pub(crate) enum VaneBody {
-                            Hyper(Incoming),
                             SwitchingProtocols(OnUpgrade),
                             UpgradeBridge {
-                                // The Unsize Coercion target
                                 tunnel_task:
                                     Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
                             },
                             Empty,
                         }
-                    }
 
-                    pub(crate) mod httpx {
-                        use super::mock_hyper::{Incoming, Upgraded};
-                        use super::wrapper::VaneBody;
-                        use crate::modules::stack::protocol::application::container::{
-                            Container, PayloadState,
-                        };
+                        // INLINED: Container/PayloadState from container
+                        pub(crate) enum PayloadState {
+                            Http(VaneBody),
+                            Empty,
+                        }
 
-                        // Minimal wrapper to maintain the async closure structure
+                        pub(crate) struct Container {
+                            pub(crate) response_body: PayloadState,
+                            pub(crate) client_upgrade: Option<OnUpgrade>,
+                        }
+
                         pub(crate) async fn handle_connection() {
                             let service = || async move { serve_request().await };
                             let _ = service().await;
                         }
 
                         async fn serve_request() {
-                            // 1. Setup Client Upgrade (Mocked)
+                            // 1. Setup Client Upgrade
                             let client_upgrade_handle = if true {
                                 Some(Box::pin(async {
                                     Ok(Upgraded {
                                         io: Box::new(tokio::io::empty()),
                                     })
-                                })
-                                    as super::mock_hyper::OnUpgrade)
+                                }) as OnUpgrade)
                             } else {
                                 None
                             };
 
-                            // 2. Setup Container
                             let mut container = Container {
-                                response_body: PayloadState::Http(VaneBody::Hyper(Incoming)),
+                                response_body: PayloadState::Empty, // Simplified initial state
                                 client_upgrade: client_upgrade_handle,
                             };
 
-                            // 3. Simulate "Logic" execution gap
                             tokio::task::yield_now().await;
 
-                            // 4. Manually set state to "SwitchingProtocols" (Simulating what flow/oneshot did)
+                            // 2. Set state to SwitchingProtocols
                             container.response_body =
                                 PayloadState::Http(VaneBody::SwitchingProtocols(Box::pin(async {
                                     Ok(Upgraded {
@@ -118,23 +117,22 @@ pub(crate) mod modules {
                                     })
                                 })));
 
-                            // 5. The Crash Site
                             let mut payload = std::mem::replace(
                                 &mut container.response_body,
                                 PayloadState::Empty,
                             );
 
+                            // 3. The Crash Logic
                             if let PayloadState::Http(VaneBody::SwitchingProtocols(
                                 upstream_upgrade,
                             )) = payload
                             {
                                 if let Some(client_upgrade) = container.client_upgrade.take() {
-                                    // Creating the !Sync future
                                     let tunnel_future = Box::pin(async move {
                                         tokio::task::yield_now().await;
                                         match tokio::try_join!(client_upgrade, upstream_upgrade) {
                                             Ok((mut client_io, mut upstream_io)) => {
-                                                // copy_bidirectional holds &mut Upgraded across await
+                                                // tokio::io::copy_bidirectional is the key here
                                                 let _ = tokio::io::copy_bidirectional(
                                                     &mut client_io,
                                                     &mut upstream_io,
@@ -145,7 +143,7 @@ pub(crate) mod modules {
                                         }
                                     });
 
-                                    // Coercion to Send + Sync triggers ICE
+                                    // ICE happens here during coercion
                                     payload = PayloadState::Http(VaneBody::UpgradeBridge {
                                         tunnel_task: Some(tunnel_future),
                                     });
@@ -153,25 +151,8 @@ pub(crate) mod modules {
                                     payload = PayloadState::Empty;
                                 }
                             }
-
-                            // Prevent optimization
                             loop {}
                         }
-                    }
-                }
-
-                pub(crate) mod container {
-                    use crate::modules::stack::protocol::application::http::mock_hyper::OnUpgrade;
-                    use crate::modules::stack::protocol::application::http::wrapper::VaneBody;
-
-                    pub(crate) enum PayloadState {
-                        Http(VaneBody),
-                        Empty,
-                    }
-
-                    pub(crate) struct Container {
-                        pub(crate) response_body: PayloadState,
-                        pub(crate) client_upgrade: Option<OnUpgrade>,
                     }
                 }
             }
